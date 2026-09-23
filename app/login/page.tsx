@@ -27,7 +27,10 @@ export default function Login() {
   return (
     <main className="auth">
       <form className="auth-card" onSubmit={signIn}>
-        <div className="auth-mark">n</div>
+        <div className="auth-brand">
+          <span className="auth-mark">n</span>
+          <span className="auth-name">Namici Chat Interface</span>
+        </div>
         <h1>Welcome back</h1>
         <p className="lede">Sign in to pick up conversations your bot has handed over.</p>
 
@@ -49,7 +52,6 @@ export default function Login() {
 
         {error && <p className="err">{error}</p>}
 
-        <p className="foot">namici-ci</p>
       </form>
     </main>
   );

@@ -16,9 +16,17 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const conversationId = String(body?.conversationId ?? '').trim();
   const text = String(body?.text ?? '').trim();
+  const kind = body?.kind === 'image' ? 'image' : 'text';
+  const mediaUrl = String(body?.mediaUrl ?? '').trim();
 
-  if (!conversationId || !text) {
-    return NextResponse.json({ error: 'conversationId and text are required' }, { status: 400 });
+  if (!conversationId) {
+    return NextResponse.json({ error: 'conversationId is required' }, { status: 400 });
+  }
+  if (kind === 'image' && !mediaUrl) {
+    return NextResponse.json({ error: 'an image message needs a mediaUrl' }, { status: 400 });
+  }
+  if (kind === 'text' && !text) {
+    return NextResponse.json({ error: 'text is required' }, { status: 400 });
   }
 
   const db = admin();
@@ -37,7 +45,13 @@ export async function POST(req: Request) {
   // recorded and retry, rather than wondering whether it was sent twice.
   const { error: insertError } = await db
     .from('messages')
-    .insert({ conversation_id: conversationId, role: 'agent', body: text });
+    .insert({
+      conversation_id: conversationId,
+      role: 'agent',
+      kind,
+      body: text,
+      media_url: kind === 'image' ? mediaUrl : null,
+    });
 
   if (insertError) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
@@ -47,7 +61,7 @@ export async function POST(req: Request) {
     .from('conversations')
     .update({
       last_message_at: new Date().toISOString(),
-      last_preview: text.slice(0, 140),
+      last_preview: (kind === 'image' ? (text ? '\uD83D\uDCF7 ' + text : '\uD83D\uDCF7 Photo') : text).slice(0, 140),
       unread: 0,
     })
     .eq('id', conversationId);
@@ -62,7 +76,9 @@ export async function POST(req: Request) {
         conversationId,
         channel: convo.channel,
         externalChatId: convo.external_chat_id,
+        kind,
         text,
+        mediaUrl: kind === 'image' ? mediaUrl : null,
       }),
     });
     delivered = res.ok;

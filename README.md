@@ -46,8 +46,9 @@ the bot cannot talk over your colleague.
 
 ### 1. Supabase
 
-Create a project, open **SQL Editor**, and run
-`supabase/migrations/0001_init.sql`.
+Create a project, open **SQL Editor**, and run the migrations in
+`supabase/migrations/` in order — `0001_init.sql`, `0002_last_preview.sql`,
+`0003_media.sql`. The last one also creates the `chat-media` storage bucket.
 
 Then create your staff logins under **Authentication → Users**. Anyone who can
 sign in can work the inbox — this is a single-tenant install, one deployment
@@ -92,11 +93,18 @@ Telegram Trigger
 
 ```
 Webhook  POST /webhook/namici-outbound      ← this is N8N_OUTBOUND_WEBHOOK_URL
-  → Switch on {{ $json.channel }}
-      telegram → Telegram: send  chatId = {{ $json.externalChatId }}
-      whatsapp → WhatsApp: send  to     = {{ $json.externalChatId }}
-      …
+  → Switch on {{ $json.body.kind }}
+      text  → Telegram: Send Message
+                 chatId = {{ $json.body.externalChatId }}
+                 text   = {{ $json.body.text }}
+      image → Telegram: Send Photo
+                 chatId    = {{ $json.body.externalChatId }}
+                 binaryData = false
+                 imageUrl  = {{ $json.body.mediaUrl }}
+                 caption   = {{ $json.body.text }}
 ```
+
+Add a second Switch on `{{ $json.body.channel }}` when you add WhatsApp.
 
 Adding a platform is one branch here and one inbound workflow. namici-ci does
 not change.
@@ -220,9 +228,14 @@ All three take and return JSON.
 
 | Route | Auth | Body | Returns |
 | --- | --- | --- | --- |
-| `POST /api/inbound` | `x-api-key` | `channel`, `externalChatId`, `text`, `contactName?`, `contactHandle?` | `{ conversationId, mode, forwardToAi }` |
+| `POST /api/inbound` | `x-api-key` | `channel`, `externalChatId`, `text`, `mediaUrl?`, `contactName?`, `contactHandle?` | `{ conversationId, mode, forwardToAi }` |
 | `POST /api/bot-message` | `x-api-key` | `conversationId`, `text` | `{ ok }` |
-| `POST /api/reply` | staff session | `conversationId`, `text` | `{ ok, delivered, deliveryError }` |
+| `POST /api/reply` | staff session | `conversationId`, `text`, `kind?`, `mediaUrl?` | `{ ok, delivered, deliveryError }` |
+
+Send `text`, `mediaUrl`, or both. A message with a `mediaUrl` is stored as an
+image and the text becomes its caption. The outbound webhook receives
+`kind` (`text` or `image`) and `mediaUrl` so your workflow knows which send
+node to use.
 
 `/api/reply` **saves before it sends**. If n8n is down you get
 `delivered:false` and the message is still in the thread, so you know to retry
@@ -237,6 +250,24 @@ rather than wondering whether it went out twice.
   answer the customer's next message over the top of them.
 - **Hand back deliberately.** The chat stays with the human until someone
   presses *Hand back to AI*. There is no timer.
+- **New messages arrive over a WebSocket, not a poll.** Supabase Realtime
+  publishes the row change and the browser already has the socket open, so an
+  idle tab makes no requests at all. This is why the migration runs
+  `alter publication supabase_realtime add table messages` — without it
+  Postgres never publishes and the inbox looks broken while the data is fine.
+- **Unread clears when you open a chat**, not only when you reply, and the
+  total shows in the tab title as `(3) namici-ci`.
+- **The bell in the sidebar turns on alerts** — a short two-note chime plus a
+  desktop notification when the tab is in the background. The choice is
+  remembered per browser. It stays silent for the conversation you already
+  have open and focused, and never fires for the bot's own replies.
+- **Scroll up to load older messages.** The thread opens with the newest 30
+  and fetches the next 30 each time you reach the top, keeping your place
+  rather than jumping.
+- **The `chat-media` bucket is public.** Telegram and WhatsApp fetch an image
+  by URL when sending it, so the link has to work without a token. Signed URLs
+  would be more private but expire, which would break every image already in
+  the thread. Do not put anything confidential in there.
 - **WhatsApp's 24-hour rule still applies.** Outside 24 hours from the
   customer's last message only approved templates send. namici-ci will show
   the reply as saved and `delivered:false`.

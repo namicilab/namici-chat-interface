@@ -21,10 +21,18 @@ export async function POST(req: Request) {
   const channel = String(body?.channel || '').trim();
   const externalChatId = String(body?.externalChatId ?? '').trim();
   const text = String(body?.text ?? '').trim();
+  const kind = body?.kind === 'image' ? 'image' : 'text';
+  const mediaUrl = String(body?.mediaUrl ?? '').trim();
 
-  if (!channel || !externalChatId || !text) {
+  if (!channel || !externalChatId) {
     return NextResponse.json(
-      { error: 'channel, externalChatId and text are all required' },
+      { error: 'channel and externalChatId are required' },
+      { status: 400 }
+    );
+  }
+  if (!text && !mediaUrl) {
+    return NextResponse.json(
+      { error: 'send text, mediaUrl, or both' },
       { status: 400 }
     );
   }
@@ -54,7 +62,13 @@ export async function POST(req: Request) {
 
   const { error: msgError } = await db
     .from('messages')
-    .insert({ conversation_id: convo.id, role: 'customer', body: text });
+    .insert({
+      conversation_id: convo.id,
+      role: 'customer',
+      kind: mediaUrl ? 'image' : kind,
+      body: text,
+      media_url: mediaUrl || null,
+    });
 
   if (msgError) {
     return NextResponse.json({ error: msgError.message }, { status: 500 });
@@ -64,7 +78,7 @@ export async function POST(req: Request) {
     .from('conversations')
     .update({
       last_message_at: new Date().toISOString(),
-      last_preview: text.slice(0, 140),
+      last_preview: (mediaUrl ? (text ? '\uD83D\uDCF7 ' + text : '\uD83D\uDCF7 Photo') : text).slice(0, 140),
       unread: (convo.unread ?? 0) + 1,
     })
     .eq('id', convo.id);
