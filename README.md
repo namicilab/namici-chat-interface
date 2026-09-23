@@ -71,6 +71,31 @@ npm run dev
 
 Deploys to Vercel as-is. Set the same five variables there.
 
+### Running it yourself with PM2
+
+```bash
+npm run build
+pm2 start ecosystem.config.js
+pm2 save && pm2 startup      # bring it back after a reboot
+```
+
+It listens on **port 3009**, set in `ecosystem.config.js` and nowhere else —
+`next start` reads `PORT` from the environment, so there is no port baked into
+`package.json` to drift out of step with it. Change the port there.
+
+| | |
+| --- | --- |
+| Logs | `pm2 logs namici-ci`, or `logs/out.log` and `logs/error.log` |
+| Restart after a change | `npm run build && pm2 restart namici-ci` |
+| Status | `pm2 status` |
+
+`.env.local` is read at startup, so **edit it and then restart** — PM2 will not
+pick up new values on its own.
+
+Put a reverse proxy in front of it for TLS. Whatever public URL you give it is
+what goes in the n8n **Namici Config** node, not `localhost:3009` — n8n has to
+reach it from wherever n8n runs.
+
 ### 3. The two n8n workflows
 
 **a. Inbound** — one per chat platform.
