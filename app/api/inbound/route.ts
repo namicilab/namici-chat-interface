@@ -62,7 +62,11 @@ export async function POST(req: Request) {
 
   await db
     .from('conversations')
-    .update({ last_message_at: new Date().toISOString(), unread: (convo.unread ?? 0) + 1 })
+    .update({
+      last_message_at: new Date().toISOString(),
+      last_preview: text.slice(0, 140),
+      unread: (convo.unread ?? 0) + 1,
+    })
     .eq('id', convo.id);
 
   return NextResponse.json({

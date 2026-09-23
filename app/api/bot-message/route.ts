@@ -30,7 +30,7 @@ export async function POST(req: Request) {
 
   await db
     .from('conversations')
-    .update({ last_message_at: new Date().toISOString() })
+    .update({ last_message_at: new Date().toISOString(), last_preview: text.slice(0, 140) })
     .eq('id', conversationId);
 
   return NextResponse.json({ ok: true });

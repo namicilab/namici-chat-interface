@@ -45,7 +45,11 @@ export async function POST(req: Request) {
 
   await db
     .from('conversations')
-    .update({ last_message_at: new Date().toISOString(), unread: 0 })
+    .update({
+      last_message_at: new Date().toISOString(),
+      last_preview: text.slice(0, 140),
+      unread: 0,
+    })
     .eq('id', conversationId);
 
   let delivered = false;
