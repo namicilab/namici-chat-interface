@@ -9,12 +9,6 @@ export function admin() {
   );
 }
 
-/** Rejects the request unless n8n sent the shared secret. */
-export function checkApiKey(req: Request) {
-  const sent = req.headers.get('x-api-key');
-  return Boolean(sent) && sent === process.env.NAMICI_API_KEY;
-}
-
 /** Resolves the staff member behind a browser request, or null. */
 export async function staffFromRequest(req: Request) {
   const auth = req.headers.get('authorization') || '';

@@ -19,15 +19,15 @@ Free and MIT. If you would rather not install it, we host it for you.
 Customer on Telegram / WhatsApp / …
         │
         ▼
-   n8n workflow  ──POST /api/inbound──▶  namici-ci   (save + read the AI/human flag)
-        │                                    │
-        │        ◀──{ forwardToAi }──────────┘
+   n8n workflow  ──writes──▶  Supabase  ──Realtime──▶  namici-ci inbox
+        │                    (conversation, message,
+        │                     preview, unread; reads mode)
         ▼
-   forwardToAi = true  →  run the agent  →  reply to the customer
-                                          →  POST /api/bot-message (so the
-                                             operator sees what the bot said)
+   mode = ai     →  run the agent  →  reply to the customer
+                                   →  write the reply to `messages` (so the
+                                      operator sees what the bot said)
 
-   forwardToAi = false →  stop. A human owns this chat.
+   mode = human  →  stop. A human owns this chat.
 
 
 Operator replies in namici-ci
@@ -36,9 +36,16 @@ Operator replies in namici-ci
    POST /api/reply  ──▶  n8n outbound webhook  ──▶  delivered on the original platform
 ```
 
-The AI/human flag lives in one column, `conversations.mode`. That is the entire
-handoff: while it is `human`, `/api/inbound` returns `forwardToAi:false` and
-the bot cannot talk over your colleague.
+namici-ci itself has one API route, `/api/reply`, for messages staff send from
+the inbox. Everything inbound is written by n8n straight into Supabase, and
+the inbox picks it up over Realtime.
+
+The handoff flag is the `chat_handoffs` table, keyed by `conversations.id`.
+n8n reads the newest `active` row for the conversation on every inbound
+message: while one exists and has not passed `expires_at`, the bot does not
+run. *Take over* opens a row, *Hand back to AI* closes it, and when the bot
+cannot answer n8n opens one itself with an expiry. `conversations.mode` mirrors
+the flag so the inbox can show who has each chat.
 
 ---
 
@@ -48,7 +55,8 @@ the bot cannot talk over your colleague.
 
 Create a project, open **SQL Editor**, and run the migrations in
 `supabase/migrations/` in order — `0001_init.sql`, `0002_last_preview.sql`,
-`0003_media.sql`. The last one also creates the `chat-media` storage bucket.
+`0003_media.sql`, `0004_chat_handoffs.sql`. `0003` also creates the
+`chat-media` storage bucket.
 
 Then create your staff logins under **Authentication → Users**. Anyone who can
 sign in can work the inbox — this is a single-tenant install, one deployment
@@ -57,7 +65,7 @@ per business.
 ### 2. The app
 
 ```bash
-cp .env.example .env.local     # fill in the five values
+cp .env.example .env.local     # fill in the four values
 npm install
 npm run dev
 ```
@@ -67,27 +75,36 @@ npm run dev
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | same page, the **anon** key |
 | `SUPABASE_SERVICE_ROLE_KEY` | same page, the **service role** key. Server only. |
-| `NAMICI_API_KEY` | invent one. n8n sends it as `x-api-key`. |
 | `N8N_OUTBOUND_WEBHOOK_URL` | the webhook in step 3b |
 
 That is enough to run it locally. For a server, see **Deploying** below.
 
 ### 3. The two n8n workflows
 
-**a. Inbound** — one per chat platform.
+**a. Inbound** — one per chat platform. n8n needs a Supabase credential with
+the **service role** key, since it writes past row level security.
 
 ```
 Telegram Trigger
-  → HTTP Request  POST  https://your-app/api/inbound
-      header  x-api-key: <NAMICI_API_KEY>
-      body    { channel, externalChatId, text, contactName, contactHandle }
-  → IF  {{ $json.forwardToAi }}
+  → Supabase REST  POST /rest/v1/conversations?on_conflict=channel,external_chat_id
+      header  Prefer: resolution=merge-duplicates,return=representation
+      body    { channel, external_chat_id, contact_name, contact_handle, last_message_at }
+      → returns the row, including id, mode and unread
+  → Supabase REST  POST /rest/v1/messages
+      body    { conversation_id, role: 'customer', kind, body, media_url }
+  → Supabase REST  PATCH /rest/v1/conversations?id=eq.<id>
+      body    { last_message_at, last_preview, unread: unread + 1 }
+  → IF  mode == 'ai'
       true → your AI Agent
            → Telegram: send the reply
-           → HTTP Request POST /api/bot-message
-                { conversationId, text }
+           → Supabase REST POST /rest/v1/messages
+                { conversation_id, role: 'ai', kind: 'text', body }
       false → stop. A human has it.
 ```
+
+Photos: download the file from Telegram, upload it to the `chat-media` bucket
+(`POST /storage/v1/object/chat-media/<path>`), and save the message with
+`kind: 'image'` and the public URL as `media_url`.
 
 **b. Outbound** — one, shared by every platform.
 
@@ -113,7 +130,7 @@ not change.
 
 ## Deploying
 
-Vercel takes it as-is — push the repo and set the same five variables.
+Vercel takes it as-is — push the repo and set the same four variables.
 To run it on your own box:
 
 ### PM2
@@ -203,33 +220,15 @@ browser straight to Supabase, not through nginx, so the usual
 `Upgrade`/`Connection` dance does not apply here. Leaving it out is correct,
 not an omission.
 
-**Consider locking the n8n endpoints down.** `/api/inbound` and
-`/api/bot-message` are public and guarded only by the shared key. If your n8n
-has a fixed IP, add belt and braces:
-
-```nginx
-location ~ ^/api/(inbound|bot-message)$ {
-    allow 203.0.113.10;        # your n8n server
-    deny  all;
-    proxy_pass http://127.0.0.1:3009;
-    proxy_set_header Host              $host;
-    proxy_set_header X-Real-IP         $remote_addr;
-    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
-
-Put that block **above** `location /`. Do not lock down `/api/reply` — that
-one is called by staff browsers, from anywhere.
+**Guard the service role key.** n8n holds it to write inbound messages, and it
+bypasses every RLS policy. Keep it in n8n's credential store only.
 
 ## API
 
-All three take and return JSON.
+One route, JSON in and out.
 
 | Route | Auth | Body | Returns |
 | --- | --- | --- | --- |
-| `POST /api/inbound` | `x-api-key` | `channel`, `externalChatId`, `text`, `mediaUrl?`, `contactName?`, `contactHandle?` | `{ conversationId, mode, forwardToAi }` |
-| `POST /api/bot-message` | `x-api-key` | `conversationId`, `text` | `{ ok }` |
 | `POST /api/reply` | staff session | `conversationId`, `text`, `kind?`, `mediaUrl?` | `{ ok, delivered, deliveryError }` |
 
 Send `text`, `mediaUrl`, or both. A message with a `mediaUrl` is stored as an
@@ -248,8 +247,9 @@ rather than wondering whether it went out twice.
 - **Typing takes the chat over.** An operator who sends a message switches the
   conversation to `human` automatically. Leaving it on `ai` would let the bot
   answer the customer's next message over the top of them.
-- **Hand back deliberately.** The chat stays with the human until someone
-  presses *Hand back to AI*. There is no timer.
+- **Hand back deliberately.** A takeover from the inbox stays until someone
+  presses *Hand back to AI*. A handoff the bot opened itself expires after
+  the hours set in the n8n workflow, and the bot answers again.
 - **New messages arrive over a WebSocket, not a poll.** Supabase Realtime
   publishes the row change and the browser already has the socket open, so an
   idle tab makes no requests at all. This is why the migration runs

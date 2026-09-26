@@ -297,8 +297,27 @@ export default function Inbox() {
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   }
 
+  // chat_handoffs is the flag n8n checks before running the bot; mode mirrors
+  // it so the list can show who has each chat. Taking over opens a row with no
+  // expiry, handing back closes every open row for the conversation.
   async function setMode(id: string, mode: 'ai' | 'human') {
-    await getSupabase().from('conversations').update({ mode }).eq('id', id);
+    const supabase = getSupabase();
+    const { error } = mode === 'human'
+      ? await supabase.from('chat_handoffs').insert({
+          chat_id: id,
+          status: 'active',
+          reason: 'operator takeover',
+          operator_id: email || null,
+        })
+      : await supabase.from('chat_handoffs')
+          .update({ status: 'closed' })
+          .eq('chat_id', id)
+          .eq('status', 'active');
+    if (error) {
+      alert('Could not change who has this chat: ' + error.message);
+      return;
+    }
+    await supabase.from('conversations').update({ mode }).eq('id', id);
     loadConversations();
   }
 
@@ -371,7 +390,7 @@ export default function Inbox() {
           {visible.length === 0 && (
             <p className="hint">
               {conversations.length === 0
-                ? <>Nothing yet. Point an n8n workflow at <code>/api/inbound</code>.</>
+                ? <>Nothing yet. Messages appear here once your n8n workflow writes them to Supabase.</>
                 : 'No conversation matches that.'}
             </p>
           )}
