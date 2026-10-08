@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Offline · namici</title>
+  <style>
+    :root { --bg: #f4f4fb; --ink: #1b1c2e; --muted: #8f93ab; --brand: #6d28d9; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #12121c; --ink: #e8e8f3; --muted: #9a9db6; } }
+    html, body { height: 100%; margin: 0; }
+    body { display: grid; place-items: center; background: var(--bg); color: var(--ink); text-align: center;
+           font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 24px; box-sizing: border-box; }
+    img { width: 72px; height: 72px; border-radius: 18px; }
+    h1 { font-size: 19px; margin: 18px 0 6px; }
+    p { margin: 0 0 22px; color: var(--muted); }
+    button { font: inherit; font-weight: 700; color: #fff; background: var(--brand); border: 0; border-radius: 99px;
+             padding: 11px 22px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/icon-192.png" alt="" />
+    <h1>You're offline</h1>
+    <p>Connect to the internet to see new messages.</p>
+    <button onclick="location.reload()">Try again</button>
+  </main>
+  <script>addEventListener('online', () => location.reload());</script>
+</body>
+</html>
